@@ -21,6 +21,69 @@
 └── .github/workflows/   # GitHub Pages deployment
 ```
 
+## Архитектура и связи компонентов
+
+```mermaid
+flowchart LR
+    subgraph Build[Сборка]
+        Core[core<br/>RV32IM CPU, память,<br/>ELF loader и Host API]
+        Wasm[wasm<br/>WebAssembly API<br/>и DoomHost]
+        Pack[wasm-pack]
+        Package[web/pkg<br/>JavaScript bindings<br/>и .wasm модуль]
+
+        Core -->|Rust dependency| Wasm
+        Wasm --> Pack --> Package
+    end
+
+    subgraph Browser[Работа в браузере]
+        Page[web/index.html]
+        Elf[web/doom.elf<br/>гостевая RV32IM программа]
+        Wad[web/doom1.wad<br/>игровые данные]
+        Emulator[Экземпляр WasmRiscv]
+        Memory[Гостевая память<br/>регистры и framebuffer]
+        Canvas[HTML Canvas<br/>640 × 400]
+
+        Page -->|import| Package
+        Package --> Emulator
+        Page -->|fetch + load_elf| Elf
+        Elf -->|PT_LOAD-сегменты| Memory
+        Page -->|fetch + load_wad| Wad
+        Wad -->|читает DoomHost| Emulator
+        Emulator -->|исполняет инструкции ELF| Memory
+        Memory -->|framebuffer| Page
+        Page -->|putImageData| Canvas
+        Page -->|клавиши и время| Emulator
+    end
+```
+
+`core` — независимое от браузера ядро эмулятора. Оно реализует процессор RV32IM, память, загрузчик ELF и общий интерфейс `Host`. Пакет `wasm` подключает `core` как Rust-зависимость, добавляет браузерный API `WasmRiscv` и реализацию `DoomHost`, через которую Doom получает WAD, время и платформенные системные вызовы. `wasm-pack` компилирует оба Rust-пакета в один WASM-модуль и создаёт JavaScript bindings в `web/pkg`.
+
+`doom.elf` не компилируется в WebAssembly и не становится частью `core`. Это отдельная гостевая программа для архитектуры RISC-V. Браузер загружает файл через `fetch()`, а `load_elf()` разбирает ELF-заголовки, копирует сегменты `PT_LOAD` в гостевую память и устанавливает точку входа процессора. Затем каждый кадр frontend вызывает `run()`: ядро читает и исполняет инструкции Doom из гостевой памяти, `DoomHost` обслуживает обращения к `doom1.wad`, а готовый framebuffer копируется на Canvas.
+
+Последовательность запуска:
+
+```mermaid
+sequenceDiagram
+    participant Web as web/index.html
+    participant API as wasm/WasmRiscv
+    participant Core as core/RV32IM
+    participant Doom as doom.elf
+    participant Screen as Canvas
+
+    Web->>API: new WasmRiscv()
+    Web->>API: load_elf(doom.elf)
+    API->>Core: загрузить PT_LOAD и entry point
+    Web->>API: load_wad(doom1.wad)
+    loop Каждый animation frame
+        Web->>API: set_ticks_ms() и run()
+        API->>Core: исполнить пакет инструкций
+        Core->>Doom: выполнение RV32IM-кода
+        Doom-->>API: системные вызовы через DoomHost
+        API-->>Web: framebuffer
+        Web->>Screen: putImageData()
+    end
+```
+
 ## Проверка Rust workspace
 
 ```sh
@@ -48,7 +111,7 @@ cd web
 python3 -m http.server 8080
 ```
 
-Откройте [http://localhost:8080](http://localhost:8080) и нажмите «Загрузить doom.elf».
+Откройте [http://localhost:8080](http://localhost:8080) и нажмите «Load doom.elf».
 
 Для запуска нужны файлы:
 
@@ -77,4 +140,3 @@ web/pkg/riscv_emu_wasm_bg.wasm
 ## Ограничения
 
 Не реализованы MMU, Linux, прерывания, расширения A/C/F/D/V, звук и сохранения. CSR представлены только внутренними счётчиками. Неподдержанная инструкция или ошибочный доступ к памяти возвращают явную ловушку.
-
