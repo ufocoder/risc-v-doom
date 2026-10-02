@@ -34,7 +34,31 @@ let emu, wasmMemory, running=false;
 const INSTRUCTIONS_PER_FRAME=2000000;
 let sample={instructions:0,emuMs:0,convertMs:0,canvasMs:0,frames:0,started:0};
 const keys={Enter:1,Escape:2,ArrowLeft:3,ArrowRight:4,ArrowUp:5,ArrowDown:6,Control:7,' ':8,Shift:9,Alt:10};
-document.addEventListener('keydown',e=>{if(!emu)return;emu.push_key(keys[e.key]??e.key.toLowerCase().charCodeAt(0));e.preventDefault()});
+const pressedKeys=new Map();
+function doomKey(event){
+ const mapped=keys[event.key];
+ if(mapped)return mapped;
+ return event.key.length===1?event.key.toLowerCase().charCodeAt(0):null;
+}
+document.addEventListener('keydown',event=>{
+ const key=doomKey(event);
+ if(key===null)return;
+ event.preventDefault();
+ if(!emu||event.repeat||pressedKeys.has(event.code))return;
+ pressedKeys.set(event.code,key);
+ emu.push_key_event(key,true);
+});
+document.addEventListener('keyup',event=>{
+ const key=pressedKeys.get(event.code)??doomKey(event);
+ if(key===null)return;
+ event.preventDefault();
+ pressedKeys.delete(event.code);
+ if(emu)emu.push_key_event(key,false);
+});
+window.addEventListener('blur',()=>{
+ if(emu)for(const key of pressedKeys.values())emu.push_key_event(key,false);
+ pressedKeys.clear();
+});
 document.querySelector('#start').onclick=async()=>{
  try { const wasm=await init(); wasmMemory=wasm.memory; emu=new WasmRiscv(); const [elf,wad]=await Promise.all([fetch('./doom.elf'),fetch('./doom1.wad?v=2')]); if(!elf.ok||!wad.ok)throw new Error('doom.elf or doom1.wad could not be found'); emu.load_elf(new Uint8Array(await elf.arrayBuffer())); emu.load_wad(new Uint8Array(await wad.arrayBuffer())); running=true; sample={instructions:0,emuMs:0,convertMs:0,canvasMs:0,frames:0,started:performance.now()}; status.textContent='Running'; requestAnimationFrame(frame); }
  catch(e){status.textContent=e.message;console.error(e)}

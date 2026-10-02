@@ -141,6 +141,9 @@ impl WasmRiscv {
     pub fn push_key(&mut self, key: u32) {
         self.cpu.mem.push_key(key);
     }
+    pub fn push_key_event(&mut self, key: u32, pressed: bool) {
+        self.cpu.mem.push_key_event(key, pressed);
+    }
     pub fn set_ticks_ms(&mut self, ticks: u32) {
         self.cpu.mem.set_ticks_ms(ticks);
     }

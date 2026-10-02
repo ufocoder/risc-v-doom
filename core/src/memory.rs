@@ -47,12 +47,15 @@ impl Memory {
         self.ticks_ms = value;
     }
     pub fn push_key(&mut self, key: u32) {
+        self.push_key_event(key, true);
+    }
+    pub fn push_key_event(&mut self, key: u32, pressed: bool) {
         self.keys.push_back(key);
         const QUEUE_START: usize = DRAM_SIZE - 32 - 1;
         const READ_INDEX: usize = QUEUE_START - 1;
         const WRITE_INDEX: usize = READ_INDEX - 1;
         let index = (self.dram[WRITE_INDEX] % 16) as usize;
-        let event = 0x0100 | (key as u16 & 0xff);
+        let event = ((pressed as u16) << 8) | (key as u16 & 0xff);
         self.dram[QUEUE_START + index * 2..QUEUE_START + index * 2 + 2]
             .copy_from_slice(&event.to_le_bytes());
         self.dram[WRITE_INDEX] = ((index + 1) % 16) as u8;
@@ -162,5 +165,20 @@ mod tests {
         assert_eq!(m.uart_buffer, "A");
         assert_eq!(m.read_u32(KEYBOARD_ADDR).unwrap(), 42);
         assert_eq!(m.read_u32(TIMER_ADDR).unwrap(), 99);
+    }
+    #[test]
+    fn keyboard_ring_buffer_records_press_and_release() {
+        let mut m = Memory::new();
+        const QUEUE_START: usize = DRAM_SIZE - 32 - 1;
+        m.push_key_event(3, true);
+        m.push_key_event(3, false);
+        assert_eq!(
+            u16::from_le_bytes([m.dram[QUEUE_START], m.dram[QUEUE_START + 1]]),
+            0x0103
+        );
+        assert_eq!(
+            u16::from_le_bytes([m.dram[QUEUE_START + 2], m.dram[QUEUE_START + 3]]),
+            0x0003
+        );
     }
 }
