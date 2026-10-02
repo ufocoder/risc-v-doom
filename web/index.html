@@ -1,27 +1,29 @@
 <!doctype html>
-<html lang="ru">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>RV32IM Emulator</title>
   <style>
     :root { color-scheme: dark; font-family: system-ui, sans-serif; background:#101114; color:#eee }
-    body { min-height:100vh; margin:0; display:grid; place-items:center }
-    main { text-align:center }
-    canvas { width:min(960px,90vw); image-rendering:pixelated; border:1px solid #555; background:#000 }
-    button { margin:1rem; padding:.7rem 1.4rem; font:inherit; cursor:pointer }
+    * { box-sizing:border-box }
+    body { min-height:100dvh; margin:0; padding:.6rem; display:grid; place-items:center }
+    main { width:100%; text-align:center }
+    h1 { margin:.25rem 0 .5rem }
+    canvas { width:min(800px,88vw,calc((100dvh - 190px) * 1.6)); max-width:100%; height:auto; image-rendering:pixelated; border:1px solid #555; background:#000 }
+    button { margin:.55rem; padding:.5rem 1rem; font:inherit; cursor:pointer }
     #status { color:#aaa }
-    #stats { margin:.75rem auto 0; width:min(640px,90vw); display:grid; grid-template-columns:repeat(3,1fr); gap:.4rem 1rem; color:#9fd; font:12px ui-monospace,monospace; text-align:left }
+    #stats { margin:.45rem auto 0; width:min(640px,88vw); display:grid; grid-template-columns:repeat(3,1fr); gap:.3rem .75rem; color:#9fd; font:12px ui-monospace,monospace; text-align:left }
   </style>
 </head>
 <body><main>
   <h1>RISC-V RV32IM</h1>
   <canvas id="screen" width="640" height="400"></canvas><br>
-  <button id="start">Загрузить doom.elf</button>
-  <div id="status">Ожидание запуска</div>
+  <button id="start">Load doom.elf</button>
+  <div id="status">Waiting to start</div>
   <div id="stats">
-    <span id="mips">MIPS: —</span><span id="fps">FPS: —</span><span id="total-ms">Кадр: —</span>
-    <span id="emu-ms">CPU: —</span><span id="convert-ms">Пиксели: —</span><span id="canvas-ms">Canvas: —</span>
+    <span id="mips">MIPS: —</span><span id="fps">FPS: —</span><span id="total-ms">Frame: —</span>
+    <span id="emu-ms">CPU: —</span><span id="convert-ms">Pixels: —</span><span id="canvas-ms">Canvas: —</span>
   </div>
 </main>
 <script type="module">
@@ -34,7 +36,7 @@ let sample={instructions:0,emuMs:0,convertMs:0,canvasMs:0,frames:0,started:0};
 const keys={Enter:1,Escape:2,ArrowLeft:3,ArrowRight:4,ArrowUp:5,ArrowDown:6,Control:7,' ':8,Shift:9,Alt:10};
 document.addEventListener('keydown',e=>{if(!emu)return;emu.push_key(keys[e.key]??e.key.toLowerCase().charCodeAt(0));e.preventDefault()});
 document.querySelector('#start').onclick=async()=>{
- try { const wasm=await init(); wasmMemory=wasm.memory; emu=new WasmRiscv(); const [elf,wad]=await Promise.all([fetch('./doom.elf'),fetch('./doom1.wad?v=2')]); if(!elf.ok||!wad.ok)throw new Error('Не найдены doom.elf или doom1.wad'); emu.load_elf(new Uint8Array(await elf.arrayBuffer())); emu.load_wad(new Uint8Array(await wad.arrayBuffer())); running=true; sample={instructions:0,emuMs:0,convertMs:0,canvasMs:0,frames:0,started:performance.now()}; status.textContent='Запущено'; requestAnimationFrame(frame); }
+ try { const wasm=await init(); wasmMemory=wasm.memory; emu=new WasmRiscv(); const [elf,wad]=await Promise.all([fetch('./doom.elf'),fetch('./doom1.wad?v=2')]); if(!elf.ok||!wad.ok)throw new Error('doom.elf or doom1.wad could not be found'); emu.load_elf(new Uint8Array(await elf.arrayBuffer())); emu.load_wad(new Uint8Array(await wad.arrayBuffer())); running=true; sample={instructions:0,emuMs:0,convertMs:0,canvasMs:0,frames:0,started:performance.now()}; status.textContent='Running'; requestAnimationFrame(frame); }
  catch(e){status.textContent=e.message;console.error(e)}
 };
 function frame(now){
@@ -57,7 +59,7 @@ function frame(now){
   sample.frames++;
   if(canvasEnd-sample.started>=1000)reportMetrics(canvasEnd);
   const out=emu.uart_output();if(out)console.log(out);
-  if(!emu.halted())requestAnimationFrame(frame);else status.textContent='Программа завершена';
+  if(!emu.halted())requestAnimationFrame(frame);else status.textContent='Program finished';
  }catch(e){running=false;status.textContent=String(e);console.error(e)}
 }
 function reportMetrics(now){
@@ -65,9 +67,9 @@ function reportMetrics(now){
  metrics.mips.textContent=`MIPS: ${(sample.instructions/(sample.emuMs/1000)/1e6).toFixed(1)}`;
  metrics.fps.textContent=`FPS: ${(sample.frames/seconds).toFixed(1)}`;
  metrics.emu.textContent=`CPU: ${(sample.emuMs/frames).toFixed(2)} ms`;
- metrics.convert.textContent=`Пиксели: ${(sample.convertMs/frames).toFixed(2)} ms`;
+ metrics.convert.textContent=`Pixels: ${(sample.convertMs/frames).toFixed(2)} ms`;
  metrics.canvas.textContent=`Canvas: ${(sample.canvasMs/frames).toFixed(2)} ms`;
- metrics.total.textContent=`Кадр: ${((sample.emuMs+sample.convertMs+sample.canvasMs)/frames).toFixed(2)} ms`;
+ metrics.total.textContent=`Frame: ${((sample.emuMs+sample.convertMs+sample.canvasMs)/frames).toFixed(2)} ms`;
  sample={instructions:0,emuMs:0,convertMs:0,canvasMs:0,frames:0,started:now};
 }
 </script></body></html>
