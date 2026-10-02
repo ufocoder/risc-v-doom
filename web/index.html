@@ -10,31 +10,45 @@
     body { min-height:100dvh; margin:0; padding:.6rem; display:grid; place-items:center }
     main { width:100%; text-align:center }
     h1 { margin:.25rem 0 .5rem }
-    canvas { width:min(800px,88vw,calc((100dvh - 190px) * 1.6)); max-width:100%; height:auto; image-rendering:pixelated; border:1px solid #555; background:#000 }
+    canvas { width:min(800px,88vw,calc((100dvh - 285px) * 1.6)); max-width:100%; height:auto; image-rendering:pixelated; border:1px solid #555; background:#000 }
     button { margin:.55rem; padding:.5rem 1rem; font:inherit; cursor:pointer }
+    button:disabled { cursor:not-allowed; opacity:.55 }
     #status { color:#aaa }
     #stats { margin:.45rem auto 0; width:min(640px,88vw); display:grid; grid-template-columns:repeat(3,1fr); gap:.3rem .75rem; color:#9fd; font:12px ui-monospace,monospace; text-align:left }
+    #controls { margin:.35rem auto 0; display:flex; justify-content:center; align-items:center; gap:.5rem }
+    #controls button { margin:0; min-width:7rem; touch-action:none; background:#852323; color:#fff; border:1px solid #d85b5b; border-radius:.25rem }
+    #legend { margin:.45rem auto 0; width:min(760px,92vw); color:#bbb; font-size:12px; line-height:1.45 }
+    #legend kbd { padding:.08rem .3rem; border:1px solid #666; border-radius:.2rem; background:#25272c; color:#fff; font:inherit; white-space:nowrap }
   </style>
 </head>
 <body><main>
   <h1>RISC-V RV32IM</h1>
   <canvas id="screen" width="640" height="400"></canvas><br>
-  <button id="start">Load doom.elf</button>
-  <div id="status">Waiting to start</div>
+  <button id="start" disabled>Loading…</button>
+  <div id="status">Preparing emulator…</div>
   <div id="stats">
     <span id="mips">MIPS: —</span><span id="fps">FPS: —</span><span id="total-ms">Frame: —</span>
     <span id="emu-ms">CPU: —</span><span id="convert-ms">Pixels: —</span><span id="canvas-ms">Canvas: —</span>
+  </div>
+  <div id="controls"><button id="fire" disabled>Fire</button></div>
+  <div id="legend">
+    <kbd>↑</kbd>/<kbd>↓</kbd> move · <kbd>←</kbd>/<kbd>→</kbd> turn ·
+    <kbd>Ctrl</kbd> or <kbd>Fire</kbd> shoot · <kbd>Space</kbd> use/open ·
+    <kbd>Shift</kbd> run · <kbd>Esc</kbd> menu · <kbd>Enter</kbd> select
   </div>
 </main>
 <script type="module">
 import init, { WasmRiscv } from './pkg/riscv_emu_wasm.js';
 const canvas=document.querySelector('#screen'), ctx=canvas.getContext('2d'), status=document.querySelector('#status');
+const startButton=document.querySelector('#start');
+const fireButton=document.querySelector('#fire');
 const metrics={mips:document.querySelector('#mips'),fps:document.querySelector('#fps'),total:document.querySelector('#total-ms'),emu:document.querySelector('#emu-ms'),convert:document.querySelector('#convert-ms'),canvas:document.querySelector('#canvas-ms')};
-let emu, wasmMemory, running=false;
+let emu, wasmMemory, running=false, loading=false;
 const INSTRUCTIONS_PER_FRAME=2000000;
 let sample={instructions:0,emuMs:0,convertMs:0,canvasMs:0,frames:0,started:0};
 const keys={Enter:1,Escape:2,ArrowLeft:3,ArrowRight:4,ArrowUp:5,ArrowDown:6,Control:7,' ':8,Shift:9,Alt:10};
 const pressedKeys=new Map();
+let fireHeld=false;
 function doomKey(event){
  const mapped=keys[event.key];
  if(mapped)return mapped;
@@ -44,7 +58,7 @@ document.addEventListener('keydown',event=>{
  const key=doomKey(event);
  if(key===null)return;
  event.preventDefault();
- if(!emu||event.repeat||pressedKeys.has(event.code))return;
+ if(!running||event.repeat||pressedKeys.has(event.code))return;
  pressedKeys.set(event.code,key);
  emu.push_key_event(key,true);
 });
@@ -53,15 +67,88 @@ document.addEventListener('keyup',event=>{
  if(key===null)return;
  event.preventDefault();
  pressedKeys.delete(event.code);
- if(emu)emu.push_key_event(key,false);
+ if(running)emu.push_key_event(key,false);
 });
 window.addEventListener('blur',()=>{
- if(emu)for(const key of pressedKeys.values())emu.push_key_event(key,false);
+ if(running)for(const key of pressedKeys.values())emu.push_key_event(key,false);
  pressedKeys.clear();
+ releaseFire();
 });
-document.querySelector('#start').onclick=async()=>{
- try { const wasm=await init(); wasmMemory=wasm.memory; emu=new WasmRiscv(); const [elf,wad]=await Promise.all([fetch('./doom.elf'),fetch('./doom1.wad?v=2')]); if(!elf.ok||!wad.ok)throw new Error('doom.elf or doom1.wad could not be found'); emu.load_elf(new Uint8Array(await elf.arrayBuffer())); emu.load_wad(new Uint8Array(await wad.arrayBuffer())); running=true; sample={instructions:0,emuMs:0,convertMs:0,canvasMs:0,frames:0,started:performance.now()}; status.textContent='Running'; requestAnimationFrame(frame); }
- catch(e){status.textContent=e.message;console.error(e)}
+function pressFire(event){
+ event.preventDefault();
+ if(!running||fireHeld)return;
+ fireHeld=true;
+ fireButton.setPointerCapture?.(event.pointerId);
+ emu.push_key_event(keys.Control,true);
+}
+function releaseFire(event){
+ event?.preventDefault();
+ if(!fireHeld)return;
+ fireHeld=false;
+ if(emu)emu.push_key_event(keys.Control,false);
+}
+fireButton.addEventListener('pointerdown',pressFire);
+fireButton.addEventListener('pointerup',releaseFire);
+fireButton.addEventListener('pointercancel',releaseFire);
+fireButton.addEventListener('lostpointercapture',releaseFire);
+async function fetchWithProgress(url,label){
+ const response=await fetch(url);
+ if(!response.ok)throw new Error(`${label} could not be loaded (${response.status})`);
+ const total=Number(response.headers.get('content-length'))||0;
+ if(!response.body){
+  const data=new Uint8Array(await response.arrayBuffer());
+  status.textContent=`Loading ${label}: complete`;
+  return data;
+ }
+ const reader=response.body.getReader(), chunks=[];
+ let loaded=0;
+ while(true){
+  const {done,value}=await reader.read();
+  if(done)break;
+  chunks.push(value);
+  loaded+=value.length;
+  status.textContent=total
+   ?`Loading ${label}: ${Math.round(loaded/total*100)}%`
+   :`Loading ${label}: ${(loaded/1024/1024).toFixed(1)} MB`;
+ }
+ const data=new Uint8Array(loaded);
+ let offset=0;
+ for(const chunk of chunks){data.set(chunk,offset);offset+=chunk.length}
+ return data;
+}
+async function prepare(){
+ if(loading)return;
+ loading=true;
+ startButton.disabled=true;
+ startButton.textContent='Loading…';
+ try{
+  status.textContent='Initializing WebAssembly…';
+  const wasm=await init();
+  wasmMemory=wasm.memory;
+  emu=new WasmRiscv();
+  const elf=await fetchWithProgress('./doom.elf','doom.elf');
+  emu.load_elf(elf);
+  const wad=await fetchWithProgress('./doom1.wad?v=2','doom1.wad');
+  emu.load_wad(wad);
+  status.textContent='Ready to start';
+  startButton.textContent='Start Doom';
+  startButton.disabled=false;
+ }catch(error){
+  emu=undefined;
+  status.textContent=`Loading failed: ${error.message}`;
+  startButton.textContent='Retry loading';
+  startButton.disabled=false;
+  console.error(error);
+ }finally{loading=false}
+}
+startButton.onclick=()=>{
+ if(!emu){prepare();return}
+ startButton.disabled=true;
+ fireButton.disabled=false;
+ running=true;
+ sample={instructions:0,emuMs:0,convertMs:0,canvasMs:0,frames:0,started:performance.now()};
+ status.textContent='Running';
+ requestAnimationFrame(frame);
 };
 function frame(now){
  if(!running)return;
@@ -83,8 +170,8 @@ function frame(now){
   sample.frames++;
   if(canvasEnd-sample.started>=1000)reportMetrics(canvasEnd);
   const out=emu.uart_output();if(out)console.log(out);
-  if(!emu.halted())requestAnimationFrame(frame);else status.textContent='Program finished';
- }catch(e){running=false;status.textContent=String(e);console.error(e)}
+  if(!emu.halted())requestAnimationFrame(frame);else{running=false;fireButton.disabled=true;status.textContent='Program finished'}
+ }catch(e){running=false;fireButton.disabled=true;status.textContent=String(e);console.error(e)}
 }
 function reportMetrics(now){
  const seconds=(now-sample.started)/1000, frames=sample.frames||1;
@@ -96,4 +183,5 @@ function reportMetrics(now){
  metrics.total.textContent=`Frame: ${((sample.emuMs+sample.convertMs+sample.canvasMs)/frames).toFixed(2)} ms`;
  sample={instructions:0,emuMs:0,convertMs:0,canvasMs:0,frames:0,started:now};
 }
+prepare();
 </script></body></html>
