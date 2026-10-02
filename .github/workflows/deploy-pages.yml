@@ -7,6 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
+  actions: read
   contents: read
   pages: write
   id-token: write
@@ -20,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -41,12 +42,18 @@ jobs:
         run: wasm-pack build --target web --release --out-dir ../web/pkg
 
       - name: Configure GitHub Pages
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@v6
 
-      - name: Upload web directory
-        uses: actions/upload-pages-artifact@v3
+      - name: Package web directory
+        run: tar --dereference --hard-dereference --directory web -cvf "$RUNNER_TEMP/pages.tar" --exclude=.git --exclude=.github .
+
+      - name: Upload GitHub Pages artifact
+        uses: actions/upload-artifact@v6
         with:
-          path: web
+          name: github-pages
+          path: ${{ runner.temp }}/pages.tar
+          if-no-files-found: error
+          retention-days: 1
 
   deploy:
     environment:
@@ -57,5 +64,4 @@ jobs:
     steps:
       - name: Deploy GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
-
+        uses: actions/deploy-pages@v5
