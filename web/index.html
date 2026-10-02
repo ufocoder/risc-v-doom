@@ -15,8 +15,11 @@
     #status { position:absolute; inset:0; display:grid; place-items:center; padding:1rem; background:rgba(0,0,0,.72); color:#fff; font:600 15px ui-monospace,monospace; text-align:center; text-shadow:0 1px 2px #000 }
     #status.is-hidden { display:none }
     #stats { margin:1.25rem auto 0; width:min(640px,88vw); display:grid; grid-template-columns:repeat(3,1fr); gap:.3rem .75rem; color:#9fd; font:12px ui-monospace,monospace; text-align:left }
-    #legend { margin:1.5rem auto 0; width:min(760px,92vw); color:#bbb; font-size:12px; line-height:1.45 }
-    #legend kbd { padding:.08rem .3rem; border:1px solid #666; border-radius:.2rem; background:#25272c; color:#fff; font:inherit; white-space:nowrap }
+    #legend { margin:1.5rem auto 0; width:min(760px,92vw); display:flex; flex-wrap:wrap; justify-content:center; gap:.8rem 1.25rem; color:#bbb; font-size:12px; line-height:1.45 }
+    #legend span { white-space:nowrap }
+    #legend kbd { padding:.08rem .3rem; border:1px solid #666; border-radius:.2rem; background:#25272c; color:#fff; font:inherit; white-space:nowrap; cursor:pointer; user-select:none; touch-action:none }
+    #legend kbd:hover { border-color:#aaa; background:#34373e }
+    #legend kbd:active { transform:translateY(1px); background:#555b66 }
   </style>
 </head>
 <body><main>
@@ -30,9 +33,13 @@
     <span id="emu-ms">CPU: —</span><span id="convert-ms">Pixels: —</span><span id="canvas-ms">Canvas: —</span>
   </div>
   <div id="legend">
-    <kbd>↑</kbd>/<kbd>↓</kbd> move · <kbd>←</kbd>/<kbd>→</kbd> turn ·
-    <kbd>Ctrl</kbd> shoot · <kbd>Space</kbd> use/open ·
-    <kbd>Shift</kbd> run · <kbd>Esc</kbd> menu · <kbd>Enter</kbd> select
+    <span><kbd data-key="ArrowUp">↑</kbd>/<kbd data-key="ArrowDown">↓</kbd> move</span>
+    <span><kbd data-key="ArrowLeft">←</kbd>/<kbd data-key="ArrowRight">→</kbd> turn</span>
+    <span><kbd data-key="Control">Ctrl</kbd> shoot</span>
+    <span><kbd data-key="Space">Space</kbd> use/open</span>
+    <span><kbd data-key="Shift">Shift</kbd> run</span>
+    <span><kbd data-key="Escape">Esc</kbd> menu</span>
+    <span><kbd data-key="Enter">Enter</kbd> select</span>
   </div>
 </main>
 <script type="module">
@@ -42,8 +49,9 @@ const metrics={mips:document.querySelector('#mips'),fps:document.querySelector('
 let emu, wasmMemory, running=false, loading=false;
 const INSTRUCTIONS_PER_FRAME=2000000;
 let sample={instructions:0,emuMs:0,convertMs:0,canvasMs:0,frames:0,started:0};
-const keys={Enter:1,Escape:2,ArrowLeft:3,ArrowRight:4,ArrowUp:5,ArrowDown:6,Control:7,' ':8,Shift:9,Alt:10};
+const keys={Enter:1,Escape:2,ArrowLeft:3,ArrowRight:4,ArrowUp:5,ArrowDown:6,Control:7,' ':8,Space:8,Shift:9,Alt:10};
 const pressedKeys=new Map();
+const pointerKeys=new Map();
 function doomKey(event){
  const mapped=keys[event.key];
  if(mapped)return mapped;
@@ -66,12 +74,34 @@ document.addEventListener('keyup',event=>{
 });
 window.addEventListener('blur',()=>{
  if(running)for(const key of pressedKeys.values())emu.push_key_event(key,false);
+ if(running)for(const key of pointerKeys.values())emu.push_key_event(key,false);
  pressedKeys.clear();
+ pointerKeys.clear();
 });
-async function fetchWithProgress(url,label){
+function releasePointerKey(event){
+ const key=pointerKeys.get(event.pointerId);
+ if(key===undefined)return;
+ event.preventDefault();
+ pointerKeys.delete(event.pointerId);
+ if(running)emu.push_key_event(key,false);
+}
+for(const control of document.querySelectorAll('#legend kbd')){
+ control.addEventListener('pointerdown',event=>{
+  const key=keys[control.dataset.key];
+  if(!running||key===undefined||pointerKeys.has(event.pointerId))return;
+  event.preventDefault();
+  pointerKeys.set(event.pointerId,key);
+  control.setPointerCapture(event.pointerId);
+  emu.push_key_event(key,true);
+ });
+ control.addEventListener('pointerup',releasePointerKey);
+ control.addEventListener('pointercancel',releasePointerKey);
+ control.addEventListener('lostpointercapture',releasePointerKey);
+}
+async function fetchWithProgress(url,label,expectedSize){
  const response=await fetch(url);
  if(!response.ok)throw new Error(`${label} could not be loaded (${response.status})`);
- const total=Number(response.headers.get('content-length'))||0;
+ const total=expectedSize||Number(response.headers.get('content-length'))||0;
  if(!response.body){
   const data=new Uint8Array(await response.arrayBuffer());
   status.textContent=`Loading ${label}: complete`;
@@ -85,7 +115,7 @@ async function fetchWithProgress(url,label){
   chunks.push(value);
   loaded+=value.length;
   status.textContent=total
-   ?`Loading ${label}: ${Math.round(loaded/total*100)}%`
+   ?`Loading ${label}: ${Math.min(100,Math.round(loaded/total*100))}%`
    :`Loading ${label}: ${(loaded/1024/1024).toFixed(1)} MB`;
  }
  const data=new Uint8Array(loaded);
@@ -102,9 +132,9 @@ async function prepare(){
   const wasm=await init();
   wasmMemory=wasm.memory;
   emu=new WasmRiscv();
-  const elf=await fetchWithProgress('./doom.elf','doom.elf');
+  const elf=await fetchWithProgress('./doom.elf','doom.elf',684520);
   emu.load_elf(elf);
-  const wad=await fetchWithProgress('./doom1.wad?v=2','doom1.wad');
+  const wad=await fetchWithProgress('./doom1.wad?v=2','doom1.wad',28787748);
   emu.load_wad(wad);
   startGame();
  }catch(error){
