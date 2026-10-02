@@ -1,0 +1,30 @@
+# Rust build artifacts
+/target/
+**/*.rs.bk
+
+# Generated WebAssembly package (rebuilt by wasm-pack and GitHub Actions)
+/web/pkg/
+
+# Local development and editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+/tmp/
+/coverage/
+
+# Local HTTP server state
+*.pid

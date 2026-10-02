@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>RV32IM Emulator</title>
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, sans-serif; background:#101114; color:#eee }
+    body { min-height:100vh; margin:0; display:grid; place-items:center }
+    main { text-align:center }
+    canvas { width:min(960px,90vw); image-rendering:pixelated; border:1px solid #555; background:#000 }
+    button { margin:1rem; padding:.7rem 1.4rem; font:inherit; cursor:pointer }
+    #status { color:#aaa }
+    #stats { margin:.75rem auto 0; width:min(640px,90vw); display:grid; grid-template-columns:repeat(3,1fr); gap:.4rem 1rem; color:#9fd; font:12px ui-monospace,monospace; text-align:left }
+  </style>
+</head>
+<body><main>
+  <h1>RISC-V RV32IM</h1>
+  <canvas id="screen" width="640" height="400"></canvas><br>
+  <button id="start">Загрузить doom.elf</button>
+  <div id="status">Ожидание запуска</div>
+  <div id="stats">
+    <span id="mips">MIPS: —</span><span id="fps">FPS: —</span><span id="total-ms">Кадр: —</span>
+    <span id="emu-ms">CPU: —</span><span id="convert-ms">Пиксели: —</span><span id="canvas-ms">Canvas: —</span>
+  </div>
+</main>
+<script type="module">
+import init, { WasmRiscv } from './pkg/riscv_emu_wasm.js';
+const canvas=document.querySelector('#screen'), ctx=canvas.getContext('2d'), status=document.querySelector('#status');
+const metrics={mips:document.querySelector('#mips'),fps:document.querySelector('#fps'),total:document.querySelector('#total-ms'),emu:document.querySelector('#emu-ms'),convert:document.querySelector('#convert-ms'),canvas:document.querySelector('#canvas-ms')};
+let emu, wasmMemory, running=false;
+const INSTRUCTIONS_PER_FRAME=2000000;
+let sample={instructions:0,emuMs:0,convertMs:0,canvasMs:0,frames:0,started:0};
+const keys={Enter:1,Escape:2,ArrowLeft:3,ArrowRight:4,ArrowUp:5,ArrowDown:6,Control:7,' ':8,Shift:9,Alt:10};
+document.addEventListener('keydown',e=>{if(!emu)return;emu.push_key(keys[e.key]??e.key.toLowerCase().charCodeAt(0));e.preventDefault()});
+document.querySelector('#start').onclick=async()=>{
+ try { const wasm=await init(); wasmMemory=wasm.memory; emu=new WasmRiscv(); const [elf,wad]=await Promise.all([fetch('./doom.elf'),fetch('./doom1.wad?v=2')]); if(!elf.ok||!wad.ok)throw new Error('Не найдены doom.elf или doom1.wad'); emu.load_elf(new Uint8Array(await elf.arrayBuffer())); emu.load_wad(new Uint8Array(await wad.arrayBuffer())); running=true; sample={instructions:0,emuMs:0,convertMs:0,canvasMs:0,frames:0,started:performance.now()}; status.textContent='Запущено'; requestAnimationFrame(frame); }
+ catch(e){status.textContent=e.message;console.error(e)}
+};
+function frame(now){
+ if(!running)return;
+ try{
+  emu.set_ticks_ms(now|0);
+  const emuStart=performance.now();
+  emu.run(INSTRUCTIONS_PER_FRAME);
+  const emuEnd=performance.now();
+  const source=new Uint8ClampedArray(wasmMemory.buffer,emu.framebuffer_ptr(),emu.framebuffer_size());
+  const pixels=source.slice();
+  for(let i=0;i<pixels.length;i+=4){const blue=pixels[i];pixels[i]=pixels[i+2];pixels[i+2]=blue;pixels[i+3]=255}
+  const convertEnd=performance.now();
+  ctx.putImageData(new ImageData(pixels,640,400),0,0);
+  const canvasEnd=performance.now();
+  sample.instructions+=INSTRUCTIONS_PER_FRAME;
+  sample.emuMs+=emuEnd-emuStart;
+  sample.convertMs+=convertEnd-emuEnd;
+  sample.canvasMs+=canvasEnd-convertEnd;
+  sample.frames++;
+  if(canvasEnd-sample.started>=1000)reportMetrics(canvasEnd);
+  const out=emu.uart_output();if(out)console.log(out);
+  if(!emu.halted())requestAnimationFrame(frame);else status.textContent='Программа завершена';
+ }catch(e){running=false;status.textContent=String(e);console.error(e)}
+}
+function reportMetrics(now){
+ const seconds=(now-sample.started)/1000, frames=sample.frames||1;
+ metrics.mips.textContent=`MIPS: ${(sample.instructions/(sample.emuMs/1000)/1e6).toFixed(1)}`;
+ metrics.fps.textContent=`FPS: ${(sample.frames/seconds).toFixed(1)}`;
+ metrics.emu.textContent=`CPU: ${(sample.emuMs/frames).toFixed(2)} ms`;
+ metrics.convert.textContent=`Пиксели: ${(sample.convertMs/frames).toFixed(2)} ms`;
+ metrics.canvas.textContent=`Canvas: ${(sample.canvasMs/frames).toFixed(2)} ms`;
+ metrics.total.textContent=`Кадр: ${((sample.emuMs+sample.convertMs+sample.canvasMs)/frames).toFixed(2)} ms`;
+ sample={instructions:0,emuMs:0,convertMs:0,canvasMs:0,frames:0,started:now};
+}
+</script></body></html>
